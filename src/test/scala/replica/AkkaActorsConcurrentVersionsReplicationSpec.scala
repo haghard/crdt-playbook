@@ -51,14 +51,14 @@ class AkkaActorsConcurrentVersionsReplicationSpec extends TestKit(ActorSystem("R
       val logger = Logger(replicaName)
       val cb: ActorRef = waiter
       var replicas: List[akka.actor.ActorRef] = Nil
-      var applicationState: ConcurrentVersions[Order, OrderEvent] =
-        ConcurrentVersionsTree(Order(orderId)) { (order: Order, event: OrderEvent) ⇒
+      var applicationState: ConcurrentVersions[Order, Event] =
+        ConcurrentVersionsTree(Order(orderId)) { (order: Order, event: Event) ⇒
           event match {
             case PrintOrder(orderId)                   ⇒ order
-            case OrderCreated(orderId, _)              ⇒ Order(orderId)
-            case OrderItemAdded(orderId, item)         ⇒ order.addLine(item)
-            case OrderItemRemoved(orderId, item)       ⇒ order.removeLine(item)
-            case OrderConflictResolved(orderId, items) ⇒ Order(orderId, items.toList)
+            case ItemCreated(orderId, _)              ⇒ Order(orderId)
+            case ItemAdded(orderId, item)         ⇒ order.addLine(item)
+            case ItemRemoved(orderId, item)       ⇒ order.removeLine(item)
+            case ItemConflictResolved(orderId, items) ⇒ Order(orderId, items.toList)
           }
         }
 
@@ -66,7 +66,7 @@ class AkkaActorsConcurrentVersionsReplicationSpec extends TestKit(ActorSystem("R
         case event: InstallAkkaReplica ⇒
           logger.info(s"Create replication channel from ${event.replicaName} to $replicaName")
           replicas = event.actor :: replicas
-        case event: OrderItemAdded ⇒
+        case event: ItemAdded ⇒
           val nextVectorTimestamp = applicationState.all.head.vectorTimestamp.increment(replicaName)
           applicationState = applicationState.update(event, nextVectorTimestamp)
           logger.info(s"[add-item]: ${event.item}")
@@ -87,7 +87,7 @@ class AkkaActorsConcurrentVersionsReplicationSpec extends TestKit(ActorSystem("R
               val conflictingVersions = updated.all
               val allProducts = mutable.SortedSet(conflictingVersions.map(_.value.items).flatten: _*)
               val newTimestamp = conflictingVersions.map(_.vectorTimestamp).reduce(_ merge _)
-              val resolved = updated.update(OrderConflictResolved(conflictingVersions.head.value.id, allProducts), newTimestamp)
+              val resolved = updated.update(ItemConflictResolved(conflictingVersions.head.value.id, allProducts), newTimestamp)
               val result = (resolved resolve newTimestamp)
               logger.info(s"[conflict] $conflicts resolved with $newTimestamp \nstate: ${result.all.mkString(",")}")
               result
@@ -113,13 +113,13 @@ class AkkaActorsConcurrentVersionsReplicationSpec extends TestKit(ActorSystem("R
       val replicasN = Set(1, 2, 3, 4)
       val cancelled = List()
 
-      val operations = async.boundedQueue[OrderEvent](QSize)(Ex)
+      val operations = async.boundedQueue[Event](QSize)(Ex)
       val replicas = async.boundedQueue[Int](QSize)(Ex)
 
       replicasN.foreach(replicas.enqueueOne(_).run)
 
-      val events: List[OrderEvent] = products.map(name ⇒ OrderItemAdded(orderId, name)).toList :::
-        cancelled.map(ind ⇒ OrderItemRemoved(orderId, s"${products(ind)}-product"))
+      val events: List[Event] = products.map(name ⇒ ItemAdded(orderId, name)).toList :::
+        cancelled.map(ind ⇒ ItemRemoved(orderId, s"${products(ind)}-product"))
 
       val writer = (scalaz.stream.Process.emitAll(events).toSource.zipWithIndex.map { orderEventWithInd ⇒
         //By the time a message was delivered to any replica, all previous replication messages already had been delivered to all other replicas

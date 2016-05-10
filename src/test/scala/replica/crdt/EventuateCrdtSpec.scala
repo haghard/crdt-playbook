@@ -42,10 +42,26 @@ class EventuateCrdtSpec extends WordSpec with Matchers {
       val merged1_2 = two.versionedEntries./:(tsOne)(_ merge _.vectorTimestamp)
       val mergedSet1_2 = one.add("b", merged1_2)
 
-      println(mergedSet1_2.value)
-      println(mergedSet1_2.versionedEntries)
-
       mergedSet1_2.value.size shouldBe 2
+    }
+
+    "ORCart add several instances of the same product" in {
+
+      val map = com.rbmhtechnology.eventuate.crdt.ORCart[String]()
+                  .add("a", 1, VectorTime("r1" -> 1l))
+                  .add("a", 1, VectorTime("r2" -> 1l))
+                  .add("a", 2, VectorTime("r3" -> 2l))
+                  .value
+
+      map("a") shouldBe 4
+    }
+
+    "ORCart add -> remove" in {
+      val map = com.rbmhtechnology.eventuate.crdt.ORCart[String]().add("a", 2, VectorTime("r1" -> 1l))
+
+      val ts = map.prepareRemove("a")
+
+      map.remove(ts).value.size shouldBe 0
     }
   }
 }

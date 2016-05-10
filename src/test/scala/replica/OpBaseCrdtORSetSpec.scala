@@ -25,29 +25,29 @@ class OpBaseCrdtORSetSpec extends TestKit(ActorSystem("Replication-OpBaseCrdtORS
     with WordSpecLike with MustMatchers
     with BeforeAndAfterEach with BeforeAndAfterAll with ImplicitSender {
 
-  val orderId = "order-hjk4h56kj245k7j245n7oi4ou"
+  val path = "hjk4h56kj245k7j245n7oi4ou"
 
   override def afterAll() {
     TestKit.shutdownActorSystem(system)
   }
 
   val events =
-    OrderItemAdded(orderId, "product-a") ::
-      OrderItemAdded(orderId, "product-b") ::
-      OrderItemAdded(orderId, "product-c") ::
-      OrderItemRemoved(orderId, "product-a") ::
-      OrderItemAdded(orderId, "product-d") :: //first d
-      OrderItemAdded(orderId, "product-e") ::
-      OrderItemAdded(orderId, "product-f") ::
-      OrderItemAdded(orderId, "product-d") :: //duplicate d
-      OrderItemAdded(orderId, "product-f") :: //duplicate f
-      OrderItemAdded(orderId, "product-g") ::
-      OrderItemAdded(orderId, "product-g") :: //duplicate g
-      OrderItemAdded(orderId, "product-f") :: //duplicate f
-      OrderItemAdded(orderId, "product-h") ::
-      OrderItemRemoved(orderId, "product-h") ::
-      OrderItemAdded(orderId, "product-a") :: //remove a
-      OrderItemRemoved(orderId, "product-b") :: Nil // add a for the second time
+    ItemAdded(path, "place-a") ::
+      ItemAdded(path, "place-b") ::
+      ItemAdded(path, "place-c") ::
+      ItemRemoved(path, "place-a") ::
+      ItemAdded(path, "place-d") :: //first d
+      ItemAdded(path, "place-e") ::
+      ItemAdded(path, "place-f") ::
+      ItemAdded(path, "place-d") :: //duplicate d
+      ItemAdded(path, "place-f") :: //duplicate f
+      ItemAdded(path, "place-g") ::
+      ItemAdded(path, "place-g") :: //duplicate g
+      ItemAdded(path, "place-f") :: //duplicate f
+      ItemAdded(path, "place-h") ::
+      ItemRemoved(path, "place-h") ::
+      ItemAdded(path, "place-a") :: //remove a
+      ItemRemoved(path, "place-b") :: Nil // add a for the second time
 
   def eventuateORSetReplica(replicaNum: Int, testActor: ActorRef) =
     actor(new Act {
@@ -64,25 +64,25 @@ class OpBaseCrdtORSetSpec extends TestKit(ActorSystem("Replication-OpBaseCrdtORS
         case event: InstallAkkaReplica ⇒
           logger.info(s"Create replication channel from ${event.replicaName} to $replicaName")
           replicas = event.actor :: replicas
-        case event: OrderItemAdded ⇒
+        case event: ItemAdded ⇒
           lastVectorTimestamp = (lastVectorTimestamp increment replicaName)
           shoppingCart = shoppingCart.add(event.item, lastVectorTimestamp)
           logger.info(s"[add-item]: ${event.item} at $lastVectorTimestamp state:${shoppingCart.value}")
-          replicas.foreach(_.!(ReplicationEventCrdt2(orderId, event, lastVectorTimestamp)))
-        case event: OrderItemRemoved ⇒
+          replicas.foreach(_.!(ReplicationEventCrdt2(path, event, lastVectorTimestamp)))
+        case event: ItemRemoved ⇒
           //remove an entry by removing all pairs
           val allTimestamps = (shoppingCart prepareRemove event.item)
           shoppingCart = (shoppingCart remove allTimestamps)
           logger.info(s"[remove-item]: ${event.item} at $lastVectorTimestamp state:${shoppingCart.value}")
-          replicas.foreach(_.!(ReplicationEventCrdt2(orderId, event, lastVectorTimestamp)))
+          replicas.foreach(_.!(ReplicationEventCrdt2(path, event, lastVectorTimestamp)))
         //it is a replicated and potentially concurrent update
         case event: ReplicationEventCrdt2 ⇒
           lastVectorTimestamp = event.vt merge lastVectorTimestamp
           event.event match {
-            case ev: OrderItemAdded ⇒
+            case ev: ItemAdded ⇒
               shoppingCart = shoppingCart.add(ev.item, lastVectorTimestamp)
               logger.info(s"[add-item-replication]:${ev.item} at $lastVectorTimestamp state:${shoppingCart.value}")
-            case ev: OrderItemRemoved ⇒
+            case ev: ItemRemoved ⇒
               val allTimestamps = (shoppingCart prepareRemove ev.item)
               shoppingCart = shoppingCart.remove(allTimestamps)
               logger.info(s"[remove-item-replication]:${ev.item} at $lastVectorTimestamp state:${shoppingCart.value}")
@@ -101,12 +101,12 @@ class OpBaseCrdtORSetSpec extends TestKit(ActorSystem("Replication-OpBaseCrdtORS
       val Ex = Strategy.Executor(newFixedThreadPool(4, new NamedThreadFactory("producer")))
       val replicasN = Set(1, 2, 3)
 
-      val operations = async.boundedQueue[OrderEvent](QSize)(Ex)
+      val operations = async.boundedQueue[Event](QSize)(Ex)
       val replicas = async.boundedQueue[Int](QSize)(Ex)
 
       replicasN.foreach(replicas.enqueueOne(_).run)
 
-      val expected = immutable.HashSet("product-a", "product-c", "product-d", "product-e", "product-g", "product-f")
+      val expected = immutable.HashSet("place-a", "place-c", "place-d", "place-e", "place-g", "place-f")
 
       val writer = (scalaz.stream.Process.emitAll(events).toSource.zipWithIndex.map { orderEventWithInd ⇒
         //linearizable execution is required by op based CRDT delivery mechanism
@@ -124,14 +124,14 @@ class OpBaseCrdtORSetSpec extends TestKit(ActorSystem("Replication-OpBaseCrdtORS
       val replica2 = eventuateORSetReplica(2, testActor)
       val replica3 = eventuateORSetReplica(3, testActor)
 
-      replica1.!(InstallAkkaReplica(orderId, "replica-2", replica2))
-      replica1.!(InstallAkkaReplica(orderId, "replica-3", replica3))
+      replica1.!(InstallAkkaReplica(path, "replica-2", replica2))
+      replica1.!(InstallAkkaReplica(path, "replica-3", replica3))
 
-      replica2.!(InstallAkkaReplica(orderId, "replica-1", replica1))
-      replica2.!(InstallAkkaReplica(orderId, "replica-3", replica3))
+      replica2.!(InstallAkkaReplica(path, "replica-1", replica1))
+      replica2.!(InstallAkkaReplica(path, "replica-3", replica3))
 
-      replica3.!(InstallAkkaReplica(orderId, "replica-1", replica1))
-      replica3.!(InstallAkkaReplica(orderId, "replica-2", replica2))
+      replica3.!(InstallAkkaReplica(path, "replica-1", replica1))
+      replica3.!(InstallAkkaReplica(path, "replica-2", replica2))
 
       Thread.sleep(1000)
 
@@ -143,7 +143,7 @@ class OpBaseCrdtORSetSpec extends TestKit(ActorSystem("Replication-OpBaseCrdtORS
         .onComplete(scalaz.stream.Process.eval_ {
           Task.delay {
             Thread.sleep(5000) //wait for replication happens
-            actors.foreach(_.!(PrintOrder(orderId)))
+            actors.foreach(_.!(PrintOrder(path)))
           }
         }).run.runAsync(_ ⇒ ())
 

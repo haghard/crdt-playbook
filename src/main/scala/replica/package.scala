@@ -6,7 +6,7 @@ import io.dmitryivanov.crdt.sets.ORSet
 package object replica {
 
   final class NamedThreadFactory(var name: String) extends ThreadFactory {
-    private def namePrefix = name + "-thread"
+    private def namePrefix = s"$name-thread"
 
     private val threadNumber = new AtomicInteger(1)
     private val group: ThreadGroup = Thread.currentThread().getThreadGroup
@@ -18,43 +18,31 @@ package object replica {
     }
   }
 
-  trait ChatEvent {
+  sealed trait Event {
     def id: String
-    def pos: Long
   }
 
-  case class ChatMessage(id: String, pos: Long, message: String = "") extends ChatEvent
+  case class ItemCreated(id: String, creator: String = "") extends Event
+  case class ItemAdded(id: String, item: String) extends Event
+  case class ItemRemoved(id: String, item: String) extends Event
+  case class ItemConflictResolved(id: String, items: scala.collection.mutable.SortedSet[String]) extends Event
+  case class PrintOrder(id: String) extends Event
+  case class PrintOrderT(id: String) extends Event
 
-  trait OrderEvent {
-    def orderId: String
-  }
+  case class InstallAkkaTReplica(id: String, replicaName: String, actor: akka.typed.ActorRef[Event]) extends Event
+  case class ReplicationEvent(id: String, senderReplica: String, lastSeenVt: VectorTime, event: ItemAdded) extends Event
+  case class ReplicationRemEvent(id: String, senderReplica: String, lastSeenVt: VectorTime, event: ItemRemoved) extends Event
 
-  case class OrderCreated(orderId: String, creator: String = "") extends OrderEvent
-  case class OrderItemAdded(orderId: String, item: String) extends OrderEvent
-  case class OrderItemRemoved(orderId: String, item: String) extends OrderEvent
-  case class OrderConflictResolved(orderId: String, items: scala.collection.mutable.SortedSet[String]) extends OrderEvent
-  case class PrintOrder(orderId: String) extends OrderEvent
-  case class PrintOrderT(orderId: String) extends OrderEvent
+  case class InstallReplica(id: String, replicaName: String, actor: scalaz.concurrent.Actor[Event]) extends Event
+  case class InstallAkkaReplica(id: String, replicaName: String, actor: akka.actor.ActorRef) extends Event
 
-  case class InstallAkkaTReplica(orderId: String, replicaName: String, actor: akka.typed.ActorRef[OrderEvent]) extends OrderEvent
-  case class ReplicationEvent(orderId: String, senderReplica: String, lastSeenVt: VectorTime, event: OrderItemAdded) extends OrderEvent
-  case class ReplicationRemEvent(orderId: String, senderReplica: String, lastSeenVt: VectorTime, event: OrderItemRemoved) extends OrderEvent
-
-  case class InstallReplica(orderId: String, replicaName: String, actor: scalaz.concurrent.Actor[OrderEvent]) extends OrderEvent
-  case class InstallAkkaReplica(orderId: String, replicaName: String, actor: akka.actor.ActorRef) extends OrderEvent
-
-  case class StateBasedReplication(orderId: String, crdt: ORSet[String]) extends OrderEvent
-  case class ReplicationEventCrdt2(orderId: String, event: OrderEvent, vt: VectorTime) extends OrderEvent
+  case class StateBasedReplication(id: String, crdt: ORSet[String]) extends Event
+  case class ReplicationEventCrdt2(id: String, event: Event, vt: VectorTime) extends Event
 
   trait State {
     def id: String
     def addLine(item: String): Order
     def removeLine(item: String): Order
-  }
-
-  case class Dialog(id: String, items: List[ChatMessage] = Nil) {
-    def add(item: ChatMessage): Dialog = copy(items = items :+ item)
-    override def toString() = s"[${id}] messages=${items.reverse.mkString(",")}"
   }
 
   case class Order(id: String, items: List[String] = Nil) extends State {

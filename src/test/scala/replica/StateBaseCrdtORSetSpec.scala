@@ -74,22 +74,22 @@ class StateBaseCrdtORSetSpec extends TestKit(ActorSystem("Replication-StateBaseC
 
   //Unreliable delivery channel with reordering of messages and state duplication
   val events =
-    OrderItemAdded(uuids("product-a"), "product-a") ::
-      OrderItemAdded(uuids("product-b"), "product-b") ::
-      OrderItemAdded(uuids("product-c"), "product-c") ::
-      OrderItemRemoved(uuids("product-a"), "product-a") ::
-      OrderItemAdded(uuids("product-d"), "product-d") :: //first d
-      OrderItemAdded(uuids("product-e"), "product-e") ::
-      OrderItemAdded(uuids("product-f"), "product-f") ::
-      OrderItemAdded(UUID.randomUUID().toString, "product-d") :: //duplicate d
-      OrderItemAdded(UUID.randomUUID().toString, "product-f") :: //duplicate f
-      OrderItemAdded(uuids("product-g"), "product-g") ::
-      OrderItemAdded(UUID.randomUUID().toString, "product-g") :: //duplicate g
-      OrderItemAdded(UUID.randomUUID().toString, "product-f") :: //duplicate f
-      OrderItemAdded(uuids("product-h"), "product-h") ::
-      OrderItemRemoved(uuids("product-h"), "product-h") ::
-      OrderItemAdded(UUID.randomUUID().toString, "product-a") :: //remove a
-      OrderItemRemoved(uuids("product-b"), "product-b") :: Nil // add a for the second time
+    ItemAdded(uuids("product-a"), "product-a") ::
+      ItemAdded(uuids("product-b"), "product-b") ::
+      ItemAdded(uuids("product-c"), "product-c") ::
+      ItemRemoved(uuids("product-a"), "product-a") ::
+      ItemAdded(uuids("product-d"), "product-d") :: //first d
+      ItemAdded(uuids("product-e"), "product-e") ::
+      ItemAdded(uuids("product-f"), "product-f") ::
+      ItemAdded(UUID.randomUUID().toString, "product-d") :: //duplicate d
+      ItemAdded(UUID.randomUUID().toString, "product-f") :: //duplicate f
+      ItemAdded(uuids("product-g"), "product-g") ::
+      ItemAdded(UUID.randomUUID().toString, "product-g") :: //duplicate g
+      ItemAdded(UUID.randomUUID().toString, "product-f") :: //duplicate f
+      ItemAdded(uuids("product-h"), "product-h") ::
+      ItemRemoved(uuids("product-h"), "product-h") ::
+      ItemAdded(UUID.randomUUID().toString, "product-a") :: //remove a
+      ItemRemoved(uuids("product-b"), "product-b") :: Nil // add a for the second time
 
   def stateBasedCrdtORSetReplica(replicaNum: Int, testActor: ActorRef) =
     actor(new Act {
@@ -108,13 +108,13 @@ class StateBaseCrdtORSetSpec extends TestKit(ActorSystem("Replication-StateBaseC
           replicas = event.actor :: replicas
 
         //it is a regular i.e. causally related update
-        case event: OrderItemAdded ⇒
-          shoppingCart = shoppingCart.add(value(event.orderId, event.item))
+        case event: ItemAdded ⇒
+          shoppingCart = shoppingCart.add(value(event.id, event.item))
           logger.info(s"[add-item]: ${event.item} state:${shoppingCart.lookup}")
           //emulate network latency
           system.scheduler.scheduleOnce(50 millis) { replicas.foreach(_.!(StateBasedReplication(orderId, shoppingCart))) }
-        case event: OrderItemRemoved ⇒
-          shoppingCart = (shoppingCart remove value(event.orderId, event.item))
+        case event: ItemRemoved ⇒
+          shoppingCart = (shoppingCart remove value(event.id, event.item))
           logger.info(s"[remove-item]: ${event.item}")
           system.scheduler.scheduleOnce(50 millis) { replicas.foreach(_.!(StateBasedReplication(orderId, shoppingCart))) }
 
@@ -134,15 +134,15 @@ class StateBaseCrdtORSetSpec extends TestKit(ActorSystem("Replication-StateBaseC
       val Ex = Strategy.Executor(newFixedThreadPool(4, new NamedThreadFactory("producer")))
       val replicasN = Set(1, 2, 3)
 
-      val operations = async.boundedQueue[OrderEvent](QSize)(Ex)
+      val operations = async.boundedQueue[Event](QSize)(Ex)
       val replicas = async.boundedQueue[Int](QSize)(Ex)
 
       replicasN.foreach(replicas.enqueueOne(_).run)
 
       val expected = immutable.HashSet("product-a", "product-c", "product-d", "product-e", "product-g", "product-f")
 
-      println("products:" + events.filter(_.isInstanceOf[OrderItemAdded]))
-      println("cancelled:" + events.filter(_.isInstanceOf[OrderItemRemoved]))
+      println("products:" + events.filter(_.isInstanceOf[ItemAdded]))
+      println("cancelled:" + events.filter(_.isInstanceOf[ItemRemoved]))
 
       val writer = (scalaz.stream.Process.emitAll(events).toSource.zipWithIndex.map(_._1) to operations.enqueue).drain
         .onComplete(scalaz.stream.Process.eval_ {

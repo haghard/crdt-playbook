@@ -25,29 +25,29 @@ class ScalazActorsCVReplicaSpec extends WordSpec with Matchers {
 
   //pair add(a-product);add(b-product) doesn't commute with add(b-product);add(a-product)
   //List(a-product,  b-product) != List(b-product,  a-product) we want to preserve lexicographical order
-  def scalazActorReplica(replicaNum: Int, testActor: scalaz.concurrent.Actor[Seq[VectorTime]])(implicit S: Strategy) = scalaz.concurrent.Actor[OrderEvent] {
+  def scalazActorReplica(replicaNum: Int, testActor: scalaz.concurrent.Actor[Seq[VectorTime]])(implicit S: Strategy) = scalaz.concurrent.Actor[Event] {
     val replicaName = s"replica-$replicaNum"
     val logger = Logger(replicaName)
-    var replicas: List[scalaz.concurrent.Actor[OrderEvent]] = Nil
+    var replicas: List[scalaz.concurrent.Actor[Event]] = Nil
 
-    var applicationState: ConcurrentVersions[Order, OrderEvent] =
-      ConcurrentVersionsTree(Order(orderId)) { (order: Order, event: OrderEvent) ⇒
+    var applicationState: ConcurrentVersions[Order, Event] =
+      ConcurrentVersionsTree(Order(orderId)) { (order: Order, event: Event) ⇒
         event match {
-          case OrderCreated(orderId, _)              ⇒ Order(orderId)
-          case OrderItemAdded(orderId, item)         ⇒ order.addLine(item)
-          case OrderConflictResolved(orderId, items) ⇒ Order(orderId, items.toList)
+          case ItemCreated(orderId, _)              ⇒ Order(orderId)
+          case ItemAdded(orderId, item)         ⇒ order.addLine(item)
+          case ItemConflictResolved(orderId, items) ⇒ Order(orderId, items.toList)
         }
       }
 
     //Writing into location does not need to be coordinated with other locations
-    (ev: OrderEvent) ⇒
+    (ev: Event) ⇒
       ev match {
         case event: InstallReplica ⇒
           logger.info(s"Replication channel ${event.replicaName} ~ $replicaName")
           replicas = event.actor :: replicas
 
         //it is a regular causally related update
-        case event: OrderItemAdded ⇒
+        case event: ItemAdded ⇒
           logger.info(s"[add-item]: ${event.item}")
           val nextVT = applicationState.all.head.vectorTimestamp.increment(replicaName)
           applicationState = applicationState.update(event, nextVT)
@@ -63,7 +63,7 @@ class ScalazActorsCVReplicaSpec extends WordSpec with Matchers {
               val conflictingVersions = updated.all
               val sortedProducts = mutable.SortedSet(conflictingVersions.map(_.value.items).flatten: _*)
               val newTimestamp = conflictingVersions.map(_.vectorTimestamp).reduce(_ merge _)
-              val resolved = updated.update(OrderConflictResolved(conflictingVersions.head.value.id, sortedProducts), newTimestamp)
+              val resolved = updated.update(ItemConflictResolved(conflictingVersions.head.value.id, sortedProducts), newTimestamp)
               val result = (resolved resolve newTimestamp)
               logger.info(s"[conflict]: $conflicts resolved with $newTimestamp \nState: ${result.all.mkString(",")}")
               result
@@ -86,14 +86,14 @@ class ScalazActorsCVReplicaSpec extends WordSpec with Matchers {
 
       val cancelled = List()
 
-      val operations = async.boundedQueue[OrderEvent](QSize)(Ex)
+      val operations = async.boundedQueue[Event](QSize)(Ex)
       val replicas = async.boundedQueue[Int](QSize)(Ex)
 
       val replicasN = Set(1, 2, 3)
       replicasN.foreach(replicas.enqueueOne(_).run)
 
-      val events: List[OrderEvent] = products.map(name ⇒ OrderItemAdded(orderId, name)).toList :::
-        cancelled.map(ind ⇒ OrderItemRemoved(orderId, s"${products(ind)}-product")) :::
+      val events: List[Event] = products.map(name ⇒ ItemAdded(orderId, name)).toList :::
+        cancelled.map(ind ⇒ ItemRemoved(orderId, s"${products(ind)}-product")) :::
         replicasN.toList.map(_ ⇒ PrintOrder("shopping-cart-qwerty"))
 
       val eventsWriter = (P.emitAll(events).toSource.zipWithIndex.map { orderEventWithInd ⇒
